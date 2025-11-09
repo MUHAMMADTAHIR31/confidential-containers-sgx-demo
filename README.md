@@ -30,17 +30,19 @@ This demonstration will:
 
 **Note**: Script runs with `sudo` and will install missing dependencies.
 
-## 🚀 Quick Start (3 Commands)
+## 🚀 Quick Start (2 Commands)
 
 ```bash
-# 1. Run the complete setup
+# 1. Run the complete setup and demo
 sudo ./setup-coco-demo.sh
 
-# 2. Run the demonstration
-sudo ./complete-flow.sh
-
-# 3. Clean up (when done)
+# 2. Clean up (when done)
 sudo ./cleanup.sh
+```
+
+**Alternative**: Use the wrapper script for guided flow:
+```bash
+./run-demo.sh
 ```
 
 ## 📖 Detailed Instructions
@@ -58,73 +60,63 @@ Verify prerequisites:
 ./check-prerequisites.sh
 ```
 
-### Step 2: Setup CoCo Environment
+### Step 2: Setup CoCo Environment and Run Demo
 
-Run the setup script:
+Run the complete setup script (this now includes the demo):
 ```bash
 sudo ./setup-coco-demo.sh
 ```
 
 **What it does**:
-- Installs Docker, Kubernetes tools
-- Creates single-node Kubernetes cluster
-- Deploys CoCo operator v0.10.0
-- Configures enclave-cc RuntimeClass
-- Clones and starts Trustee services (KBS, AS, RVPS, Keyprovider)
+- **Step 1-3**: Installs Docker, Docker Compose, and basic tools
+- **Step 4-5**: Prepares system and installs Kubernetes components
+- **Step 6**: Installs/configures containerd
+- **Step 7-8**: Initializes Kubernetes cluster and network
+- **Step 9**: Deploys CoCo operator v0.10.0
+- **Step 10**: Configures enclave-cc RuntimeClass
+- **Step 11**: Starts Trustee services (KBS, AS, RVPS, Keyprovider) using docker-compose
+- **Step 12**: Deploys encrypted demo workload pod
+- **Step 13**: Verifies deployment and attestation
+- **Step 14**: Saves configuration info
 
 **Expected output**:
 ```
-[Step 1] Installing prerequisites...
-[Step 2] Setting up Kubernetes cluster...
-[Step 3] Installing CoCo operator...
+STEP 1/8: Preparing System
+STEP 2/8: Installing Docker
+STEP 3/8: Preparing System for Kubernetes
+STEP 4/8: Installing Kubernetes
+STEP 5/8: Creating Kubernetes Cluster
+STEP 6/8: Verifying Network
+STEP 7/8: Starting Trustee Services
+STEP 8/8: Deploying Demo Workload
 ...
-[Step 11] Starting Trustee services...
-[PASS] All services started successfully
-
-✅ CoCo setup complete!
+✅ All steps completed successfully!
 ```
 
-**Troubleshooting**: If setup fails, check `setup.log` for details.
+**Note**: The setup script now automatically deploys the demo workload, so you don't need to run a separate demo script.
 
-### Step 3: Run the Demo
+### Step 3: Alternative - Run Complete Flow Separately
 
-Execute the complete flow:
+If you want to run the complete attestation flow as a standalone demonstration (after setup):
 ```bash
 sudo ./complete-flow.sh
 ```
 
 **What it demonstrates**:
-1. Verifies all components are running
-2. Tests KBS API (expects HTTP 401 - requires attestation)
-3. Deploys encrypted container pod
-4. Shows attestation protocol execution (RCAR)
-5. Verifies successful decryption and container startup
+1. **Phase 1**: Checks prerequisites (kubectl, docker, skopeo, runtime class)
+2. **Phase 2**: Uses pre-encrypted test image from CoCo project
+3. **Phase 3**: Configures KBS connection using pod annotations
+4. **Phase 4**: Deploys encrypted pod with attestation
+5. **Phase 5**: Shows pod logs with technical details
+6. **Phase 6**: Verifies attestation in KBS logs
 
-**Expected output**:
-```
-=== CoCo SGX Demo: Complete Flow ===
+**Key Features**:
+- Uses official CoCo encrypted test image
+- Demonstrates full RCAR attestation protocol
+- Shows real-time attestation in KBS logs
+- Pod remains running for 5 minutes for inspection
 
-[1/6] Checking prerequisites...
-[PASS] Kubernetes operational
-[PASS] Trustee services running
-
-[2/6] Testing KBS API...
-[PASS] KBS responding (HTTP 401)
-
-[3/6] Deploying encrypted container...
-[PASS] Pod created: coco-encrypted-demo
-
-[4/6] Waiting for attestation...
-[PASS] Attestation successful (HTTP 200 in KBS logs)
-
-[5/6] Verifying container is running...
-[PASS] Container running with decrypted image
-
-=== DEMO SUCCESS ===
-✅ Remote attestation completed
-✅ Encrypted image decrypted
-✅ Container running securely
-```
+**Note**: This script is optional since `setup-coco-demo.sh` already deploys the demo workload.
 
 ### Step 4: Inspect the Results
 
@@ -166,21 +158,23 @@ sudo kubeadm reset -f
 ## 📂 Demo Package Contents
 
 ```
-DEMO-FOR-PROFESSOR/
+confidential-containers-sgx-demo/
 ├── README.md                    # This file
 ├── QUICK-REFERENCE.md           # Command cheat sheet
-├── setup-coco-demo.sh           # Main setup script
-├── complete-flow.sh             # End-to-end demonstration
+├── LICENSE                      # License information
+├── setup-coco-demo.sh           # Main setup script (includes demo deployment)
+├── complete-flow.sh             # Alternative: standalone attestation demo
+├── run-demo.sh                  # Wrapper script for guided setup
 ├── cleanup.sh                   # Safe cleanup script
 ├── check-prerequisites.sh       # Prerequisites checker
 ├── validate-deployment.sh       # Post-setup validation
 ├── configs/
-│   ├── ccruntime-sgx-sim.yaml  # CoCo runtime configuration
 │   └── sgx-demo-pod.yaml       # Encrypted pod manifest
+├── trustee-config/
+│   ├── docker-compose.yml      # Trustee services configuration
+│   └── as-config.json          # Attestation Service configuration
 └── docs/
-    ├── COCO-SGX-ENCLAVE-CC-REPORT.md  # Complete technical report
-    ├── ARCHITECTURE.md          # System architecture
-    └── TROUBLESHOOTING.md       # Common issues and solutions
+    └── COCO-SGX-ENCLAVE-CC-REPORT.md  # Complete technical report
 ```
 
 ## 🔍 Verification Points
@@ -207,14 +201,17 @@ kubectl get runtimeclass enclave-cc
 
 ### 4. Trustee Services
 ```bash
-cd ~/trustee && docker-compose ps
+cd ~/trustee && docker compose ps
 # Should show: All services "Up"
+# Note: Uses docker compose (v2) not docker-compose
 ```
 
 ### 5. KBS API
 ```bash
-curl http://127.0.0.1:8090/kbs/v0/resource
-# Should return: HTTP 401 (requires attestation)
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+curl http://$LOCAL_IP:8090/
+# Should return: HTTP 404 (KBS is running)
+# Note: KBS runs on host IP, not localhost
 ```
 
 ### 6. Encrypted Pod
@@ -318,10 +315,12 @@ sudo ./setup-coco-demo.sh
 **Solution**:
 ```bash
 cd ~/trustee
-docker-compose down
-docker-compose up -d
-docker-compose logs
+docker compose down
+docker compose up -d
+docker compose logs
 ```
+
+**Note**: Uses `docker compose` (Docker Compose v2), not `docker-compose`.
 
 ### Issue 3: Pod Stuck in Pending
 
@@ -350,7 +349,7 @@ docker logs trustee-kbs-1
 
 **Solution**: Ensure KBS/AS/RVPS are all "Up":
 ```bash
-cd ~/trustee && docker-compose ps
+cd ~/trustee && docker compose ps
 ```
 
 ### Issue 5: kubectl Not Working After Cleanup
@@ -368,8 +367,7 @@ sudo chown $(id -u):$(id -g) ~/.kube/config
 
 ### Documentation
 - **Complete Technical Report**: See `docs/COCO-SGX-ENCLAVE-CC-REPORT.md`
-- **Architecture**: See `docs/ARCHITECTURE.md`
-- **Troubleshooting**: See `docs/TROUBLESHOOTING.md`
+- **Quick Reference**: See `QUICK-REFERENCE.md` for command cheat sheet
 
 ### Official CoCo Resources
 - Website: https://confidentialcontainers.org
@@ -385,10 +383,10 @@ sudo chown $(id -u):$(id -g) ~/.kube/config
 
 If you encounter issues:
 
-1. Check `docs/TROUBLESHOOTING.md`
-2. Review logs: `setup.log`, `docker logs trustee-kbs-1`
-3. Run validation: `./validate-deployment.sh`
-4. Consult the technical report for detailed explanations
+1. Review logs: `docker logs trustee-kbs-1`, `kubectl logs <pod-name>`
+2. Run validation: `./validate-deployment.sh`
+3. Check prerequisites: `./check-prerequisites.sh`
+4. Consult the technical report in `docs/COCO-SGX-ENCLAVE-CC-REPORT.md`
 
 ## 📝 Feedback
 
@@ -407,10 +405,19 @@ The demo is successful if you see:
 
 **This proves**: Remote attestation works, encrypted images can be decrypted only after attestation, and confidential containers are operational!
 
+## 📋 What's New
+
+**Recent Updates**:
+- Integrated demo deployment into setup script (single command setup)
+- Added `run-demo.sh` wrapper for guided experience
+- Moved Trustee configs to dedicated `trustee-config/` directory
+- Simplified file structure
+- Updated to use Docker Compose v2 (`docker compose`)
+
 ---
 
-**Demo Version**: 1.0  
-**Date**: October 29, 2025  
+**Demo Version**: 1.1  
+**Last Updated**: November 2025  
 **CoCo Version**: v0.10.0  
 **Kubernetes**: v1.31.13  
 **Tested on**: Ubuntu 22.04 LTS
