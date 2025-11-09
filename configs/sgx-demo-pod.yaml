@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sgx-demo-pod
+  namespace: default
+  labels:
+    app: coco-demo
+  annotations:
+    # Tell the pod how to reach the Key Broker Service with sample attestation
+    # sample mode is correct for SGX simulation - it contacts KBS with sample evidence
+    io.katacontainers.config.hypervisor.kernel_params: |
+      agent.aa_kbc_params=cc_kbc::sample::http://172.25.1.90:8090
+      agent.log_level=debug
+    # Enable SGX simulation mode
+    io.katacontainers.config.hypervisor.sgx_simulation: "true"
+spec:
+  # Use CoCo runtime (this is the key part!)
+  runtimeClassName: enclave-cc
+  containers:
+  - name: demo-container
+    image: ubuntu:22.04
+    command: ["/bin/bash", "-c"]
+    args:
+      - |
+        echo "╔══════════════════════════════════════════════════════════╗"
+        echo "║   CoCo SGX Demo - Running in Confidential Container     ║"
+        echo "╚══════════════════════════════════════════════════════════╝"
+        echo ""
+        echo "This pod is protected by SGX (simulation mode)"
+        echo "Runtime: enclave-cc"
+        echo "KBS endpoint: http://172.25.1.90:8090"
+        echo "Attestation: Sample TEE (for demo/testing)"
+        echo ""
+        echo "Container ready! Keeping alive for demonstrations..."
+        sleep 7200
+    resources:
+      limits:
+        cpu: "1000m"
+        memory: "512Mi"
+  restartPolicy: Never
