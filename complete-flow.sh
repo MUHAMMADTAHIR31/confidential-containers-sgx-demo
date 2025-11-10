@@ -1,5 +1,10 @@
 #!/bin/bash
-# CoCo Complete Flow - Attestation + Encryption Demo
+################################################################################
+#                                                                              #
+#           CoCo Complete Flow - Attestation + Encryption                     #
+#           TRUE End-to-End Demo: SGX SIM with Encrypted Image                #
+#                                                                              #
+################################################################################
 
 set -e
 
@@ -10,16 +15,20 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# Setup KUBECONFIG for both sudo and regular user
 if [ "$EUID" -eq 0 ]; then
+    # Running as root/sudo - need to set KUBECONFIG
     ACTUAL_USER=${SUDO_USER:-$USER}
     ACTUAL_HOME=$(eval echo ~$ACTUAL_USER)
     
+    # Try user's kubeconfig first, then system config
     if [ -f "$ACTUAL_HOME/.kube/config" ]; then
         export KUBECONFIG="$ACTUAL_HOME/.kube/config"
     elif [ -f "/etc/kubernetes/admin.conf" ]; then
         export KUBECONFIG="/etc/kubernetes/admin.conf"
     fi
 else
+    # Running as regular user
     if [ -f "$HOME/.kube/config" ]; then
         export KUBECONFIG="$HOME/.kube/config"
     fi
@@ -27,15 +36,18 @@ fi
 
 print_header() {
     echo ""
-    echo "$1"
-    echo "----------------------------------------"
+    echo -e "${CYAN}╔════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║  $1${NC}"
+    echo -e "${CYAN}╚════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
 }
 
-print_success() { echo "✓ $1"; }
-print_info() { echo "→ $1"; }
-print_warning() { echo "⚠ $1"; }
-print_error() { echo "✗ $1"; }
+print_success() { echo -e "${GREEN}✓ $1${NC}"; }
+print_info() { echo -e "${BLUE}→ $1${NC}"; }
+print_warning() { echo -e "${YELLOW}⚠ $1${NC}"; }
+print_error() { echo -e "${RED}✗ $1${NC}"; }
 
+# Get local IP address
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/.local-ip" ]; then
     LOCAL_IP=$(cat "$SCRIPT_DIR/.local-ip")
@@ -44,16 +56,37 @@ else
 fi
 
 clear
-echo "CoCo Complete Flow - Attestation + Encryption"
-echo "Duration: ~10 minutes"
+cat << 'EOF'
+
+   ╔══════════════════════════════════════════════════════════════════╗
+   ║                                                                  ║
+   ║       CoCo COMPLETE Flow - Attestation + Encryption              ║
+   ║                                                                  ║
+   ║   This demo shows the TRUE end-to-end CoCo workflow:             ║
+   ║   1. Encrypt container image                                     ║
+   ║   2. Store decryption key in KBS                                 ║
+   ║   3. Deploy pod with encrypted image                             ║
+   ║   4. Attestation Agent performs remote attestation               ║
+   ║   5. AA fetches decryption key from KBS                          ║
+   ║   6. Image decrypts automatically in TEE                         ║
+   ║   7. Pod runs successfully                                       ║
+   ║                                                                  ║
+   ╚══════════════════════════════════════════════════════════════════╝
+
+EOF
+
+echo -e "${YELLOW}Duration: ~10 minutes${NC}"
 echo ""
-read -p "Press Enter to start..."
+read -p "Ready to run the complete CoCo flow? Press Enter..."
 echo ""
 
-echo "PHASE 1: Checking Prerequisites"
-echo ""
+################################################################################
+# PHASE 1: Prerequisites Check
+################################################################################
 
-echo "Checking required tools..."
+print_header "PHASE 1: Checking Prerequisites"
+
+print_info "Checking required tools..."
 for tool in kubectl docker skopeo openssl; do
     if command -v $tool &> /dev/null; then
         print_success "$tool is available"

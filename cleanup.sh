@@ -1,44 +1,75 @@
 #!/bin/bash
-# CoCo SGX Demo - Cleanup Script
+# CoCo SGX Demo - Complete Cleanup Script
+# Removes all installed components and restores system
 
 set -e
 
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
 if [ "$EUID" -ne 0 ]; then 
-   echo "Please run with sudo: sudo ./cleanup.sh"
+   echo -e "${RED}Please run with sudo: sudo ./cleanup.sh${NC}"
    exit 1
 fi
 
-echo "CoCo SGX Demo - Complete Cleanup"
-echo "WARNING: This will remove Docker, Kubernetes, and all containers!"
+cat << "EOF"
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║              🧹 CoCo SGX Demo - Complete Cleanup 🧹          ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+This will remove:
+  • All Docker containers, images, and volumes
+  • Docker CE and docker-compose
+  • Kubernetes cluster (kubeadm, kubelet, kubectl)
+  • CoCo operator and runtime
+  • Trustee services
+  • All configuration files
+  • Network settings
+
+EOF
+
+echo -e "${RED}⚠️  WARNING: COMPLETE SYSTEM CLEANUP ⚠️${NC}"
+echo -e "${RED}This will UNINSTALL Docker and Kubernetes completely!${NC}"
+echo -e "${YELLOW}This is useful for fresh installation but removes ALL Docker containers!${NC}"
 echo ""
-read -p "Continue? (yes/no): " CONFIRM
+read -p "Are you sure you want to continue? (yes/no): " CONFIRM
 
 if [ "$CONFIRM" != "yes" ]; then
     echo "Cleanup cancelled."
     exit 0
 fi
 
-echo "Starting cleanup..."
-echo ""
+echo
+echo -e "${YELLOW}Starting complete cleanup...${NC}"
+echo
 
-echo "[1/8] Stopping Trustee services..."
+# Stop Trustee services
+echo -e "${YELLOW}[1/8] Stopping Trustee services...${NC}"
 ACTUAL_USER=${SUDO_USER:-$USER}
 ACTUAL_HOME=$(eval echo ~$ACTUAL_USER)
 
+# Check common locations for Trustee services
 TRUSTEE_FOUND=false
 
+# Try /root/coco-demo/trustee first (most common)
 if [ -d "/root/coco-demo/trustee" ]; then
     cd /root/coco-demo/trustee
     docker compose down -v 2>/dev/null || docker-compose down -v 2>/dev/null || true
     TRUSTEE_FOUND=true
 fi
 
+# Try user's home directory
 if [ -d "$ACTUAL_HOME/coco-demo/trustee" ]; then
     cd $ACTUAL_HOME/coco-demo/trustee
     docker compose down -v 2>/dev/null || docker-compose down -v 2>/dev/null || true
     TRUSTEE_FOUND=true
 fi
 
+# Try ~/trustee as well
 if [ -d "$ACTUAL_HOME/trustee" ]; then
     cd $ACTUAL_HOME/trustee
     docker compose down -v 2>/dev/null || docker-compose down -v 2>/dev/null || true
@@ -51,20 +82,22 @@ if [ -d "/root/trustee" ]; then
     TRUSTEE_FOUND=true
 fi
 
+# Force remove any remaining trustee containers
 docker ps -a --filter "name=trustee" --format "{{.Names}}" | xargs -r docker rm -f 2>/dev/null || true
 
 if [ "$TRUSTEE_FOUND" = true ]; then
-    echo "Done - Trustee services stopped"
+    echo -e "${GREEN}✓ Trustee services stopped${NC}"
 else
-    echo "Done - No Trustee services found"
+    echo -e "${GREEN}✓ No Trustee services directory found${NC}"
 fi
 
-echo "[2/8] Stopping all Docker containers..."
+# Stop all Docker containers
+echo -e "${YELLOW}[2/8] Stopping all Docker containers...${NC}"
 if command -v docker &> /dev/null; then
     docker stop $(docker ps -aq) 2>/dev/null || true
-    echo "Done"
+    echo -e "${GREEN}✓ All Docker containers stopped${NC}"
 else
-    echo "Done - Docker not found"
+    echo -e "${GREEN}✓ Docker not found${NC}"
 fi
 
 # Delete Kubernetes resources
@@ -138,6 +171,7 @@ if command -v docker &> /dev/null; then
     # Remove all Docker data directories
     rm -rf /var/lib/docker /var/lib/containerd 2>/dev/null || true
     rm -rf /etc/docker 2>/dev/null || true
+    rm -rf /etc/containerd 2>/dev/null || true
     rm -rf /var/run/docker.sock 2>/dev/null || true
     rm -f /etc/apt/sources.list.d/docker.list 2>/dev/null || true
     rm -f /etc/apt/keyrings/docker.gpg 2>/dev/null || true

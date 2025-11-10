@@ -7,22 +7,26 @@
 # Check if your system is ready
 ./check-prerequisites.sh
 
-# Install and configure everything
+# Install and configure everything (includes demo deployment)
 sudo ./setup-coco-demo.sh
 
 # Validate the installation
 ./validate-deployment.sh
 ```
 
-### Running the Demo
-```bash
-# Run complete demonstration
-sudo ./complete-flow.sh
+**Note**: `setup-coco-demo.sh` now automatically deploys the demo workload, so you don't need to run a separate demo script.
 
-# Alternative: Manual step-by-step
-kubectl apply -f configs/sgx-demo-pod.yaml
-kubectl wait --for=condition=Ready pod/coco-encrypted-demo --timeout=120s
-kubectl logs coco-encrypted-demo
+### Alternative: Guided Setup
+```bash
+# For step-by-step guided experience
+./run-demo.sh
+```
+
+### Running Standalone Demo (Optional)
+```bash
+# Run complete attestation flow demonstration
+# (Only needed if you want to re-run the demo after setup)
+sudo ./complete-flow.sh
 ```
 
 ### Cleanup
@@ -30,9 +34,8 @@ kubectl logs coco-encrypted-demo
 # Clean up demo resources
 sudo ./cleanup.sh
 
-# Full reset (including Kubernetes)
-sudo kubeadm reset -f
-sudo rm -rf /etc/kubernetes ~/.kube
+# Emergency: Complete Kubernetes reset
+sudo ./universal-k8s-recovery.sh
 ```
 
 ---
@@ -57,8 +60,8 @@ kubectl get runtimeclass
 
 ### Trustee Services
 ```bash
-# Service status
-cd ~/trustee && docker-compose ps
+# Service status (using docker compose v2)
+cd ~/coco-demo/trustee && docker compose ps
 
 # View logs
 docker logs trustee-kbs-1
@@ -70,22 +73,22 @@ docker logs trustee-keyprovider
 docker logs -f trustee-kbs-1
 
 # Restart service
-docker-compose restart kbs
+cd ~/coco-demo/trustee && docker compose restart kbs
 ```
 
 ### Demo Pods
 ```bash
-# List CoCo pods
-kubectl get pods -l app=coco-demo
+# List demo pod
+kubectl get pod sgx-demo-pod
 
 # Pod details
-kubectl describe pod coco-encrypted-demo
+kubectl describe pod sgx-demo-pod
 
 # Pod logs
-kubectl logs coco-encrypted-demo
+kubectl logs sgx-demo-pod
 
 # Interactive shell (if pod supports it)
-kubectl exec -it coco-encrypted-demo -- /bin/sh
+kubectl exec -it sgx-demo-pod -- /bin/bash
 ```
 
 ---
@@ -94,12 +97,17 @@ kubectl exec -it coco-encrypted-demo -- /bin/sh
 
 ### KBS API Test
 ```bash
-# Should return HTTP 401 (requires attestation)
-curl -v http://127.0.0.1:8090/kbs/v0/resource
+# Get your local IP
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+
+# Should return HTTP 404 (KBS is running, endpoint not found without auth)
+curl -v http://$LOCAL_IP:8090/
 
 # Check if KBS is listening on correct port
 netstat -tulpn | grep 8090
 ```
+
+**Note**: KBS runs on the host's local IP address, not localhost/127.0.0.1
 
 ### Attestation Evidence
 ```bash
@@ -116,11 +124,17 @@ docker logs trustee-as-1 | grep "token"
 ### Port Mappings
 ```bash
 # Verify all Trustee ports are exposed
-docker-compose ps | grep -E "(8090|50014|50013|50000)"
+cd ~/coco-demo/trustee && docker compose ps
 
 # Or check with netstat
-netstat -tulpn | grep -E "(8090|50014|50013|50000)"
+netstat -tulpn | grep -E "(8090|50004|50003|50000)"
 ```
+
+**Note**: Port mappings (HOST:CONTAINER)
+- KBS: 8090:8080
+- AS: 50004:50004 (not 50014)
+- RVPS: 50003:50003 (not 50013)
+- Keyprovider: 50000:50000
 
 ---
 
@@ -149,26 +163,26 @@ sudo systemctl status docker
 
 ### Issue: Trustee services not starting
 ```bash
-cd ~/trustee
+cd ~/coco-demo/trustee
 
 # Check what's running
-docker-compose ps
+docker compose ps
 
 # View error logs
-docker-compose logs
+docker compose logs
 
 # Restart everything
-docker-compose down
-docker-compose up -d
+docker compose down
+docker compose up -d
 
 # Check again
-docker-compose ps
+docker compose ps
 ```
 
 ### Issue: Pod stuck in ContainerCreating
 ```bash
 # Check pod events
-kubectl describe pod coco-encrypted-demo
+kubectl describe pod sgx-demo-pod
 
 # Check runtime class
 kubectl get runtimeclass enclave-cc
@@ -177,25 +191,28 @@ kubectl get runtimeclass enclave-cc
 kubectl get pods -n confidential-containers-system
 
 # Wait longer (CoCo pods take 10-20 seconds)
-kubectl wait --for=condition=Ready pod/coco-encrypted-demo --timeout=120s
+kubectl wait --for=condition=Ready pod/sgx-demo-pod --timeout=120s
 ```
 
 ### Issue: Attestation failing
 ```bash
 # Check KBS is reachable from cluster
-NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')
-kubectl run test --image=curlimages/curl --rm -it -- curl http://$NODE_IP:8090/kbs/v0/resource
+LOCAL_IP=$(hostname -I | awk '{print $1}')
+kubectl run test --image=curlimages/curl --rm -it -- curl http://$LOCAL_IP:8090/
 
 # Check AS logs for errors
 docker logs trustee-as-1 | grep -i error
 
 # Verify all services are Up
-cd ~/trustee && docker-compose ps
+cd ~/coco-demo/trustee && docker compose ps
 ```
 
 ### Issue: Network connectivity problems
 ```bash
-# Reset iptables rules
+# Use the recovery script for complete reset
+sudo ./universal-k8s-recovery.sh
+
+# Or manual reset of iptables
 sudo iptables -F
 sudo iptables -X
 sudo iptables -t nat -F
@@ -206,7 +223,7 @@ sudo systemctl restart docker
 
 # Restart Kubernetes networking
 kubectl -n kube-system delete pod -l k8s-app=kube-proxy
-kubectl -n kube-system delete pod -l app=flannel
+kubectl -n kube-flannel delete pod -l app=flannel
 ```
 
 ---
@@ -222,22 +239,21 @@ kubectl -n kube-system delete pod -l app=flannel
 ~/.kube/config
 
 # Trustee docker-compose
-~/trustee/docker-compose.yml
+~/coco-demo/trustee/docker-compose.yml
 
-# Trustee configs
-~/trustee/kbs/config/kbs-config.json
-~/trustee/attestation-service/config/as-config.json
+# Trustee configs (auto-configured by setup script)
+~/coco-demo/trustee/kbs/config/kbs-config.toml
+~/coco-demo/trustee/kbs/config/as-config.json
 
-# Demo pod manifests
+# Demo pod manifest
 ./configs/sgx-demo-pod.yaml
-./configs/ccruntime-sgx-sim.yaml
+
+# Deployment info
+~/coco-demo/deployment-info.txt
 ```
 
 ### Log Files
 ```bash
-# Setup logs
-./setup.log
-
 # Kubernetes logs
 journalctl -u kubelet | tail -50
 
@@ -253,14 +269,15 @@ journalctl -u docker | tail -50
 ## 🎯 Key Endpoints
 
 ### Trustee Services
-- **KBS**: http://127.0.0.1:8090
-- **AS (gRPC)**: 127.0.0.1:50014
-- **RVPS**: http://127.0.0.1:50013
-- **Keyprovider**: 127.0.0.1:50000
+- **KBS**: http://<LOCAL_IP>:8090 (use `hostname -I | awk '{print $1}'` to get IP)
+- **AS (gRPC)**: <LOCAL_IP>:50004
+- **RVPS (gRPC)**: <LOCAL_IP>:50003
+- **Keyprovider (gRPC)**: <LOCAL_IP>:50000
 
 ### Kubernetes
 - **API Server**: https://localhost:6443
-- **Dashboard** (if installed): http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
+
+**Note**: Trustee services use the host's local IP, not localhost/127.0.0.1
 
 ---
 
@@ -278,20 +295,20 @@ watch -n 2 kubectl get nodes
 watch -n 2 kubectl get pods -n confidential-containers-system
 
 # Watch Trustee services
-watch -n 2 "cd ~/trustee && docker-compose ps"
+watch -n 2 "cd ~/coco-demo/trustee && docker compose ps"
 ```
 
 ### Get Complete Pod Information
 ```bash
 # Full pod details in YAML
-kubectl get pod coco-encrypted-demo -o yaml
+kubectl get pod sgx-demo-pod -o yaml
 
 # Full pod details in JSON
-kubectl get pod coco-encrypted-demo -o json
+kubectl get pod sgx-demo-pod -o json
 
 # Specific fields
-kubectl get pod coco-encrypted-demo -o jsonpath='{.status.phase}'
-kubectl get pod coco-encrypted-demo -o jsonpath='{.spec.runtimeClassName}'
+kubectl get pod sgx-demo-pod -o jsonpath='{.status.phase}'
+kubectl get pod sgx-demo-pod -o jsonpath='{.spec.runtimeClassName}'
 ```
 
 ### Search Logs Efficiently
@@ -312,7 +329,7 @@ docker logs trustee-rvps-1 2>&1 | grep -i "reference"
 ### Export Evidence
 ```bash
 # Save pod manifest
-kubectl get pod coco-encrypted-demo -o yaml > pod-evidence.yaml
+kubectl get pod sgx-demo-pod -o yaml > pod-evidence.yaml
 
 # Save KBS logs
 docker logs trustee-kbs-1 > kbs-logs.txt
@@ -322,11 +339,11 @@ docker logs trustee-kbs-1 2>&1 | grep -E "(auth|200|resource)" > attestation-evi
 
 # Create evidence package
 mkdir -p evidence
-kubectl get pod coco-encrypted-demo -o yaml > evidence/pod.yaml
+kubectl get pod sgx-demo-pod -o yaml > evidence/pod.yaml
 docker logs trustee-kbs-1 > evidence/kbs.log
 docker logs trustee-as-1 > evidence/as.log
-docker-compose ps > evidence/services.txt
-tar -czf coco-demo-evidence.tar.gz evidence/
+cd ~/coco-demo/trustee && docker compose ps > ~/evidence/services.txt
+cd ~ && tar -czf coco-demo-evidence.tar.gz evidence/
 ```
 
 ---
@@ -335,10 +352,10 @@ tar -czf coco-demo-evidence.tar.gz evidence/
 
 ### Restart Just Trustee Services
 ```bash
-cd ~/trustee
-docker-compose restart
+cd ~/coco-demo/trustee
+docker compose restart
 # Or specific service:
-docker-compose restart kbs
+docker compose restart kbs
 ```
 
 ### Restart CoCo Operator
@@ -352,23 +369,24 @@ kubectl rollout restart deployment -n confidential-containers-system
 sudo ./cleanup.sh
 
 # Restart Trustee
-cd ~/trustee && docker-compose restart
+cd ~/coco-demo/trustee && docker compose restart
 
-# Deploy again
-sudo ./complete-flow.sh
+# Re-run setup (will skip already-installed components)
+sudo ./setup-coco-demo.sh
 ```
 
 ### Full System Restart
 ```bash
-# Stop everything
+# Complete reset
+sudo ./universal-k8s-recovery.sh
+
+# Or manual cleanup
 sudo ./cleanup.sh
-cd ~/trustee && docker-compose down
+cd ~/coco-demo/trustee && docker compose down
 sudo systemctl restart docker
-sudo systemctl restart kubelet
 
 # Start fresh
 sudo ./setup-coco-demo.sh
-sudo ./complete-flow.sh
 ```
 
 ---
@@ -380,11 +398,14 @@ sudo ./complete-flow.sh
 # Main README
 cat README.md
 
+# Quick reference (this file)
+cat QUICK-REFERENCE.md
+
 # Full technical report
 cat docs/COCO-SGX-ENCLAVE-CC-REPORT.md
 
-# Troubleshooting guide
-cat docs/TROUBLESHOOTING.md
+# Deployment info
+cat ~/coco-demo/deployment-info.txt
 ```
 
 ### Collect Debug Information
@@ -405,7 +426,7 @@ kubectl get runtimeclass
 kubectl get pods -n confidential-containers-system
 
 # Trustee info
-cd ~/trustee && docker-compose ps
+cd ~/coco-demo/trustee && docker compose ps
 docker logs trustee-kbs-1 | tail -50
 
 # Save all to file
@@ -418,7 +439,10 @@ docker logs trustee-kbs-1 | tail -50
     kubectl get pods --all-namespaces
     echo ""
     echo "=== Trustee ==="
-    cd ~/trustee && docker-compose ps
+    cd ~/coco-demo/trustee && docker compose ps
+    echo ""
+    echo "=== Deployment Info ==="
+    cat ~/coco-demo/deployment-info.txt
 } > debug-info.txt
 ```
 
@@ -426,11 +450,25 @@ docker logs trustee-kbs-1 | tail -50
 
 ## ⏱️ Expected Timings
 
-- **Setup**: 10-20 minutes
-- **Pod startup (encrypted)**: 10-15 seconds
+- **Setup**: 10-20 minutes (first time)
+- **Setup**: 5-10 minutes (if components already installed)
+- **Pod startup (SGX simulation)**: 10-20 seconds
 - **Attestation**: 2-3 seconds
 - **Cleanup**: 1-2 minutes
+- **Full recovery**: 3-5 minutes
 
 ---
 
-**Quick Start**: `./check-prerequisites.sh && sudo ./setup-coco-demo.sh && sudo ./complete-flow.sh`
+## 📋 Available Scripts
+
+- `check-prerequisites.sh` - System requirements checker
+- `setup-coco-demo.sh` - Complete setup (includes demo deployment)
+- `run-demo.sh` - Guided setup wrapper
+- `complete-flow.sh` - Standalone attestation demo
+- `validate-deployment.sh` - Post-installation verification
+- `cleanup.sh` - Safe removal of components
+- `universal-k8s-recovery.sh` - Emergency Kubernetes reset
+
+---
+
+**Quick Start**: `./check-prerequisites.sh && sudo ./setup-coco-demo.sh`

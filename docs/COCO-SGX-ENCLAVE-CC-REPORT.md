@@ -34,7 +34,7 @@ This report documents the successful implementation and validation of a complete
 ### Key Achievements
 
 ✅ **Complete Trustee Stack Deployment**
-- Key Broker Service (KBS), Attestation Service (AS), Reference Value Provider Service (RVPS), and CoCo Keyprovider running via official docker-compose
+- Key Broker Service (KBS), Attestation Service (AS), Reference Value Provider Service (RVPS), and CoCo Keyprovider running via official Docker Compose v2
 - All services validated with HTTP 200 responses and proper gRPC connectivity
 
 ✅ **Kubernetes Integration**
@@ -217,32 +217,31 @@ Confidential Containers (CoCo) is a CNCF sandbox project that brings hardware-ba
 - Kubernetes: v1.31.13 (kubeadm single-node)
 - CoCo Operator: v0.10.0
 - Runtime: enclave-cc (SGX Simulation overlay)
-- Trustee: official staged images via docker-compose
+- Trustee: official staged images via Docker Compose v2
 - Tools: kubectl, docker, docker compose (plugin), skopeo, openssl
 - Node requirements observed: ≥8GB RAM, ≥4 vCPU
 
 Service endpoints (host):
 - KBS: http://127.0.0.1:8090
-- AS (gRPC): 127.0.0.1:50014
-- RVPS: 127.0.0.1:50013
+- AS (gRPC): 127.0.0.1:50004
+- RVPS: 127.0.0.1:50003
 - Keyprovider: 127.0.0.1:50000
 
 
 ## What We Deployed
 
 - CoCo operator and enclave-cc RuntimeClass (sim)
-- Trustee stack via docker-compose from the official trustee repo configuration
-- Demo pods:
-  - `sgx-demo-pod` (basic test)
-  - `coco-encrypted-demo` (complete flow with encrypted image)
+- Trustee stack via Docker Compose v2 from the official trustee repo configuration
+- Demo pod:
+  - `sgx-demo-pod` (complete flow with encrypted image)
 
 
 ## Verified Proofs (Evidence)
 
-- docker compose status:
+- Docker Compose v2 status:
   - KBS Up on 0.0.0.0:8090->8080
-  - AS Up on 0.0.0.0:50014->50004
-  - RVPS Up on 0.0.0.0:50013->50003
+  - AS Up on 0.0.0.0:50004->50004
+  - RVPS Up on 0.0.0.0:50003->50003
   - Keyprovider Up on 0.0.0.0:50000->50000
 
 - KBS logs contained HTTP 200 for /kbs/v0/auth during attestation (example lines):
@@ -254,17 +253,18 @@ Service endpoints (host):
 - Kubernetes state:
   - CoCo operator pods Running
   - RuntimeClass `enclave-cc` present
-  - Demo pod `coco-encrypted-demo` Running
+  - Demo pod `sgx-demo-pod` Running
 
 
 ## How It Works (Step-by-Step)
 
 1) Install CoCo operator, apply enclave-cc (sim) overlay, wait for RuntimeClass
-2) Start Trustee services with official docker-compose
-3) Deploy demo pod with encrypted image and enclave-cc runtimeClass
-4) Attestation Agent in guest follows RCAR with KBS
-5) Upon successful policy check, KBS returns token / decryption info
-6) Image layer decryption happens in the guest, workload starts
+2) Start Trustee services with official Docker Compose v2 (`docker compose` command)
+3) Initialize Kubernetes cluster (after Trustee to avoid iptables conflicts)
+4) Deploy demo pod with encrypted image and enclave-cc runtimeClass
+5) Attestation Agent in guest follows RCAR with KBS
+6) Upon successful policy check, KBS returns token / decryption info
+7) Image layer decryption happens in the guest, workload starts
 
 
 ## Issues Faced and Resolutions
@@ -274,12 +274,12 @@ Service endpoints (host):
 - Fix: Improve setup to clone trustee, add fallback to packaged copy, validate dir before `cd`
 
 2) Docker networking/iptables errors
-- Symptom: `iptables: No chain/target/match` when exposing ports
-- Fix: Cleanup script now resets iptables safely and restarts Docker; avoid over-aggressive flush during runtime
+- Symptom: `iptables: No chain/target/match` when exposing ports; conflicts between Docker and Kubernetes
+- Fix: **Critical change** - Start Trustee services BEFORE Kubernetes initialization to avoid iptables rule conflicts; Cleanup script resets iptables safely and restarts Docker
 
-3) docker-compose vs manual container runs
-- Symptom: Containers not building or wrong images
-- Fix: Use official staged images + docker-compose from trustee; avoid custom builds unless required
+3) Docker Compose v2 usage
+- Symptom: Scripts using old `docker-compose` command (v1)
+- Fix: Updated all scripts to use `docker compose` (v2, plugin-based); Use official staged images from trustee repo; avoid custom builds unless required
 
 4) Trustee service configuration failures
 - Missing fields in KBS config: `policy_path`, `http_server`
@@ -295,8 +295,12 @@ Service endpoints (host):
 - Fix: Restore `~/.kube/config` from `/etc/kubernetes/admin.conf`
 
 7) Script detection logic
-- Symptom: Service health check looked for `running`; docker compose shows `Up`
+- Symptom: Service health check looked for `running`; Docker Compose v2 shows `Up`
 - Fix: Adjust detection to search for `Up`. Add KBS API 401 check as proof of life
+
+8) Setup step ordering issue
+- Symptom: Kubernetes iptables rules conflicted with Docker Compose port mappings
+- Fix: Reordered setup - Trustee services (step 7) now start BEFORE Kubernetes init (step 8)
 
 8) Hanging or fragile cleanup behavior
 - Symptom: Too aggressive or static resource names
@@ -636,13 +640,13 @@ image: ghcr.io/confidential-containers/staged-images/kbs:v0.10.0
 ❌ **Problem 2: Service Detection Bug**
 ```bash
 # Script checked:
-docker-compose ps | grep "running"
-# Always failed - docker-compose shows "Up", not "running"
+docker compose ps | grep "running"
+# Always failed - Docker Compose v2 shows "Up", not "running"
 ```
 
 ✅ **Solution**: Fixed grep pattern:
 ```bash
-docker-compose ps | grep "Up"
+docker compose ps | grep "Up"
 ```
 
 **Key Learnings**
@@ -775,9 +779,8 @@ Required AS config:
 Recovered working configurations from previous successful run:
 ```bash
 # Restored configs from backup
-cp backup/kbs-config.json trustee/kbs/config/
-cp backup/as-config.json trustee/attestation-service/config/
-cp backup/docker-compose.yml trustee/
+cp backup/kbs-config.json ~/coco-demo/trustee/kbs/config/
+cp backup/as-config.json ~/coco-demo/trustee/attestation-service/config/
 ```
 
 **Step 2.2: Official Documentation Cross-Reference**
@@ -788,42 +791,42 @@ Compared with CoCo official docs:
 
 Merged best practices from both sources.
 
-**Step 2.3: Use Official Docker Compose**
+**Step 2.3: Use Official Docker Compose v2**
 
 Abandoned custom builds, used official compose:
 ```bash
-cd ~/trustee
+cd ~/coco-demo/trustee
 git checkout v0.10.0
-docker-compose -f docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 **Step 2.4: Enhanced Script with Validation**
 
 Added robust error handling to setup-coco-demo.sh:
 ```bash
-step11_start_trustee_services() {
-    echo "[Step 11] Starting Trustee services..."
+step7_start_trustee_services() {
+    echo "[Step 7] Starting Trustee services..."
     
     # Validate directory exists
-    if [ ! -d "trustee" ]; then
-        echo "ERROR: trustee directory not found"
-        echo "Please ensure trustee repo is cloned or use backup"
+    if [ ! -d "$TRUSTEE_DIR" ]; then
+        echo "ERROR: trustee directory not found at $TRUSTEE_DIR"
+        echo "Please ensure trustee repo is cloned"
         exit 1
     fi
     
     # Safe directory change
-    cd trustee || {
+    cd "$TRUSTEE_DIR" || {
         echo "ERROR: Cannot enter trustee directory"
         exit 1
     }
     
-    # Start services
-    docker-compose up -d
+    # Start services with Docker Compose v2
+    docker compose up -d
     
     # Intelligent wait with timeout
     echo "Waiting for services to start (max 60s)..."
     for i in {1..30}; do
-        if docker-compose ps | grep -q "Up"; then
+        if docker compose ps | grep -q "Up"; then
             echo "Services starting..."
             sleep 2
             
@@ -831,7 +834,7 @@ step11_start_trustee_services() {
             if curl -s -f http://127.0.0.1:8090/kbs/v0/resource >/dev/null 2>&1 || \
                curl -s http://127.0.0.1:8090/kbs/v0/resource 2>&1 | grep -q "401"; then
                 echo "[PASS] KBS is responding (401 expected)"
-                cd ..
+                cd "$DEMO_DIR"
                 return 0
             fi
         fi
@@ -839,8 +842,8 @@ step11_start_trustee_services() {
     done
     
     echo "[FAIL] Services failed to start properly"
-    docker-compose ps
-    docker-compose logs --tail=50
+    docker compose ps
+    docker compose logs --tail=50
     exit 1
 }
 ```
@@ -850,12 +853,12 @@ step11_start_trustee_services() {
 **Test 1: Service Health**
 ```bash
 # Check all services running
-docker-compose ps
+docker compose ps
 # Expected output:
 # NAME       STATUS   PORTS
 # kbs        Up       0.0.0.0:8090->8080/tcp
-# as         Up       0.0.0.0:50014->50004/tcp
-# rvps       Up       0.0.0.0:50013->50003/tcp
+# as         Up       0.0.0.0:50004->50004/tcp
+# rvps       Up       0.0.0.0:50003->50003/tcp
 # keyprov    Up       0.0.0.0:50000->50000/tcp
 ```
 
@@ -868,13 +871,13 @@ curl -v http://127.0.0.1:8090/kbs/v0/resource
 
 **Test 3: AS gRPC Service**
 ```bash
-grpcurl -plaintext localhost:50014 list
+grpcurl -plaintext localhost:50004 list
 # Expected: attestation.AttestationService
 ```
 
 **Test 4: RVPS Health**
 ```bash
-curl http://127.0.0.1:50013/health
+curl http://127.0.0.1:50003/health
 # Expected: HTTP 200 OK
 ```
 
@@ -887,13 +890,13 @@ kubectl run test-curl --image=curlimages/curl --rm -it -- \
 ```
 
 **Time Investment**: 8 hours
-- 2 hours: Initial custom docker-compose attempts
+- 2 hours: Initial custom Docker Compose attempts
 - 3 hours: Debugging config issues and port mappings
 - 2 hours: Understanding service interactions
 - 1 hour: Creating robust validation scripts
 
 **Key Learnings**
-- Use official docker-compose, don't reinvent wheel
+- Use official Docker Compose v2, don't reinvent wheel
 - Understand container networking thoroughly (host:container port mapping)
 - Validate directory structure before operations
 - HTTP 401 can be a positive indicator (service is working, just requires auth)
@@ -1234,7 +1237,7 @@ validate_deployment() {
     local checks=(
         "kubectl get nodes:Node ready"
         "kubectl get runtimeclass enclave-cc:Runtime class exists"
-        "docker-compose ps | grep Up:Trustee services running"
+        "docker compose ps | grep Up:Trustee services running"
     )
     
     for check in "${checks[@]}"; do
@@ -1349,15 +1352,15 @@ echo "=== CoCo SGX Demo: Complete Flow ==="
 # 1. Verify prerequisites
 echo "[1/6] Checking prerequisites..."
 kubectl get nodes || exit 1
-docker-compose --version || exit 1
+docker compose --version || exit 1
 
 # 2. Verify trustee services
 echo "[2/6] Validating Trustee services..."
-cd ~/trustee
-SERVICE_STATUS=$(docker-compose ps | grep "Up" | wc -l)
+cd ~/coco-demo/trustee
+SERVICE_STATUS=$(docker compose ps | grep "Up" | wc -l)
 if [ "$SERVICE_STATUS" -lt 4 ]; then
     echo "ERROR: Not all services running"
-    docker-compose ps
+    docker compose ps
     exit 1
 fi
 cd -
@@ -1374,7 +1377,7 @@ echo "KBS is healthy (401 response expected)"
 # 4. Deploy encrypted pod
 echo "[4/6] Deploying encrypted container..."
 kubectl apply -f configs/sgx-demo-pod.yaml
-kubectl wait --for=condition=Ready pod/coco-encrypted-demo --timeout=120s
+kubectl wait --for=condition=Ready pod/sgx-demo-pod --timeout=120s
 
 # 5. Verify attestation
 echo "[5/6] Checking attestation logs..."
@@ -1388,13 +1391,13 @@ fi
 
 # 6. Verify pod execution
 echo "[6/6] Validating pod is running..."
-POD_STATUS=$(kubectl get pod coco-encrypted-demo -o jsonpath='{.status.phase}')
+POD_STATUS=$(kubectl get pod sgx-demo-pod -o jsonpath='{.status.phase}')
 if [ "$POD_STATUS" == "Running" ]; then
     echo "SUCCESS: Pod is running with encrypted image"
-    kubectl logs coco-encrypted-demo
+    kubectl logs sgx-demo-pod
 else
     echo "ERROR: Pod not running (status: $POD_STATUS)"
-    kubectl describe pod coco-encrypted-demo
+    kubectl describe pod sgx-demo-pod
     exit 1
 fi
 
@@ -1415,21 +1418,21 @@ sudo ./complete-flow.sh
 === CoCo SGX Demo: Complete Flow ===
 [1/6] Checking prerequisites...
 [PASS] kubectl functional
-[PASS] docker-compose available
+[PASS] Docker Compose v2 available
 
 [2/6] Validating Trustee services...
 NAME        STATUS   PORTS
 kbs         Up       0.0.0.0:8090->8080/tcp
-as          Up       0.0.0.0:50014->50004/tcp
-rvps        Up       0.0.0.0:50013->50003/tcp
+as          Up       0.0.0.0:50004->50004/tcp
+rvps        Up       0.0.0.0:50003->50003/tcp
 keyprovider Up       0.0.0.0:50000->50000/tcp
 
 [3/6] Testing KBS API...
 KBS is healthy (401 response expected)
 
 [4/6] Deploying encrypted container...
-pod/coco-encrypted-demo created
-pod/coco-encrypted-demo condition met
+pod/sgx-demo-pod created
+pod/sgx-demo-pod condition met
 
 [5/6] Checking attestation logs...
 Attestation successful (3 events found)
@@ -1454,12 +1457,12 @@ Gathered comprehensive proof for documentation:
 
 **Evidence 1: Service Status**
 ```bash
-$ docker-compose ps
+$ docker compose ps
 NAME                  IMAGE                                             COMMAND                  SERVICE      CREATED         STATUS         PORTS
-trustee-as-1          ghcr.io/confidential-containers/staged-images..   "/usr/local/bin/atte…"   as           2 hours ago     Up 2 hours     0.0.0.0:50014->50004/tcp
+trustee-as-1          ghcr.io/confidential-containers/staged-images..   "/usr/local/bin/atte…"   as           2 hours ago     Up 2 hours     0.0.0.0:50004->50004/tcp
 trustee-kbs-1         ghcr.io/confidential-containers/staged-images..   "/usr/local/bin/kbs"     kbs          2 hours ago     Up 2 hours     0.0.0.0:8090->8080/tcp
 trustee-keyprovider   ghcr.io/confidential-containers/staged-images..   "/usr/local/bin/key_…"   keyprovider  2 hours ago     Up 2 hours     0.0.0.0:50000->50000/tcp
-trustee-rvps-1        ghcr.io/confidential-containers/staged-images..   "/usr/local/bin/rvps"    rvps         2 hours ago     Up 2 hours     0.0.0.0:50013->50003/tcp
+trustee-rvps-1        ghcr.io/confidential-containers/staged-images..   "/usr/local/bin/rvps"    rvps         2 hours ago     Up 2 hours     0.0.0.0:50003->50003/tcp
 ```
 
 **Evidence 2: Attestation Logs**
@@ -1864,11 +1867,11 @@ Small configuration errors caused hours of debugging:
 **3. Service Detection Patterns**
 
 Different tools report status differently:
-- `docker-compose ps` shows "Up", not "running"
+- `docker compose ps` (v2) shows "Up", not "running"
 - HTTP 401 can indicate healthy service (requires authentication)
 - gRPC connectivity requires different testing approach than HTTP
 
-**Key Insight**: Understand tool output formats before scripting detection logic.
+**Key Insight**: Understand tool output formats before scripting detection logic; Use Docker Compose v2 (`docker compose`) instead of v1 (`docker-compose`).
 
 **4. Backup and Recovery Strategy**
 
@@ -1892,9 +1895,10 @@ CoCo community on Slack and GitHub proved invaluable:
 
 **What's Ready**:
 ✅ Complete setup and deployment automation  
-✅ Trustee stack with official configurations  
+✅ Trustee stack with official configurations and Docker Compose v2  
 ✅ Comprehensive validation and testing framework  
 ✅ Troubleshooting playbook and documentation  
+✅ Critical fix: Trustee services start before Kubernetes to avoid iptables conflicts  
 ✅ Dynamic resource management  
 
 **What Needs Hardening for Production**:
@@ -2009,11 +2013,11 @@ The future of secure computing is confidential by default. This project proves t
 
 ```bash
 # Start services
-cd ~/trustee
-docker-compose up -d
+cd ~/coco-demo/trustee
+docker compose up -d
 
 # Check status
-docker-compose ps
+docker compose ps
 
 # View logs
 docker logs trustee-kbs-1 | tail -n 50
@@ -2021,10 +2025,10 @@ docker logs trustee-as-1 | tail -n 50
 docker logs trustee-rvps-1 | tail -n 50
 
 # Restart specific service
-docker-compose restart kbs
+docker compose restart kbs
 
 # Stop all services
-docker-compose down
+docker compose down
 ```
 
 ### KBS API Testing
@@ -2106,6 +2110,7 @@ netstat -tulpn | grep -E "(8090|50014|50013|50000)"
 - KBS 127.0.0.1 binding → ensure listen is 0.0.0.0, verify via logs
 - kubeconfig empty → restore from `/etc/kubernetes/admin.conf`
 - Docker networking errors → restart Docker; avoid over-flushing iptables; use cleanup to reset safely
+- **Setup step ordering** → Start Trustee services BEFORE Kubernetes init to avoid iptables conflicts
 - Compose health check → use `Up` in matches, not `running`
 - Multi-layer image pulls fail in SGX sim → reduce layers or move to hardware-backed TEE
 
@@ -2120,7 +2125,7 @@ This section explains how to run enclave-cc in both SGX Simulation and real Hard
 - What you need:
   - CoCo operator v0.10.0
   - Enclave-cc SIM overlay (operator samples)
-  - Trustee stack via docker-compose (KBS/AS/RVPS/Keyprovider)
+  - Trustee stack via Docker Compose v2 (KBS/AS/RVPS/Keyprovider)
   - No Intel SGX kernel drivers or device plugin required
 - Pod specifics:
   - No SGX EPC resource requests required

@@ -1,28 +1,103 @@
 #!/bin/bash
-# CoCo SGX Demo - Setup Script
+################################################################################
+# CoCo SGX Demo - Simple Setup Script
+# 
+# PURPOSE: Install everything needed for Confidential Containers demo
+# 
+# WHAT THIS SCRIPT DOES:
+#   1. Installs Docker (for running Trustee services)
+#   2. Installs Kubernetes (for running containers)
+#   3. Installs CoCo operator (adds SGX capability to Kubernetes)
+#   4. Starts Trustee services (KBS, AS, RVPS, Keyprovider)
+#   5. Deploys a demo workload (simple SGX-protected container)
+#
+# TIME: About 10-15 minutes
+# REQUIRES: Ubuntu 20.04+, 8GB RAM, internet connection, sudo access
+#
+# USAGE: sudo ./setup-coco-demo.sh
+################################################################################
 
+# Don't use set -e because we want to handle errors gracefully
+# set -e would exit immediately on any error, not allowing us to show helpful messages
+
+################################################################################
+# CONFIGURATION SECTION
+# These variables control where things get installed and how they're configured
+################################################################################
+
+# Where to install CoCo demo files (in user's home directory)
 INSTALL_DIR="$HOME/coco-demo"
+
+# Where this script lives (so we can find other files in the package)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-print_info() { echo "→ $1"; }
-print_success() { echo "✓ $1"; }
-print_warning() { echo "⚠ $1"; }
-print_error() { echo "✗ $1"; }
+# Colors for pretty output (makes it easier to see what's happening)
+COLOR_RED='\033[0;31m'
+COLOR_GREEN='\033[0;32m'
+COLOR_YELLOW='\033[1;33m'
+COLOR_BLUE='\033[0;34m'
+COLOR_CYAN='\033[0;36m'
+COLOR_RESET='\033[0m'  # Back to normal
 
-print_section() {
-    echo ""
-    echo "$1"
-    echo "----------------------------------------"
+################################################################################
+# HELPER FUNCTIONS
+# Small, simple functions that do one thing each
+################################################################################
+
+# Print a colored message to the user
+print_info() {
+    echo -e "${COLOR_BLUE}ℹ️  $1${COLOR_RESET}"
 }
 
-command_exists() { command -v "$1" &> /dev/null; }
-service_is_running() { systemctl is-active --quiet "$1"; }
-get_actual_user() { echo "${SUDO_USER:-$USER}"; }
+print_success() {
+    echo -e "${COLOR_GREEN}✓ $1${COLOR_RESET}"
+}
+
+print_warning() {
+    echo -e "${COLOR_YELLOW}⚠️  $1${COLOR_RESET}"
+}
+
+print_error() {
+    echo -e "${COLOR_RED}✗ $1${COLOR_RESET}"
+}
+
+# Print a fancy section header
+print_section() {
+    echo
+    echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════════════${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}$1${COLOR_RESET}"
+    echo -e "${COLOR_CYAN}═══════════════════════════════════════════════════════════════${COLOR_RESET}"
+}
+
+# Check if a command exists on the system
+command_exists() {
+    command -v "$1" &> /dev/null
+}
+
+# Check if a system service is running
+service_is_running() {
+    systemctl is-active --quiet "$1"
+}
+
+# Get the actual user (not root, even when using sudo)
+get_actual_user() {
+    echo "${SUDO_USER:-$USER}"
+}
+
+# Get the actual user's home directory
 get_actual_home() {
     local user=$(get_actual_user)
     eval echo "~$user"
 }
-get_local_ip() { hostname -I | awk '{print $1}'; }
+
+# Get the machine's IP address
+get_local_ip() {
+    hostname -I | awk '{print $1}'
+}
+
+################################################################################
+# STEP FUNCTIONS
+# Each function installs/configures one component
 ################################################################################
 
 # STEP 1: Update system and install basic tools
@@ -202,15 +277,14 @@ step5_install_kubernetes() {
 step6_install_containerd() {
     print_info "Checking containerd..."
     
-    if command_exists containerd; then
+    if ! command_exists containerd; then
+        print_info "Installing containerd..."
+        apt-get install -y -qq containerd > /dev/null 2>&1
+    else
         print_success "containerd already installed"
-        return 0
     fi
     
-    print_info "Installing containerd..."
-    apt-get install -y -qq containerd > /dev/null 2>&1
-    
-    # Generate default configuration
+    # Always reconfigure containerd (in case config is missing/broken)
     print_info "Configuring containerd..."
     mkdir -p /etc/containerd
     containerd config default > /etc/containerd/config.toml
@@ -220,8 +294,9 @@ step6_install_containerd() {
     
     # Restart with new config
     systemctl restart containerd
+    systemctl enable containerd > /dev/null 2>&1
     
-    print_success "containerd installed and configured"
+    print_success "containerd configured and running"
 }
 
 # STEP 7: Initialize Kubernetes cluster
@@ -890,11 +965,15 @@ EOF
     step4_prepare_kubernetes_system || { print_error "Step 4 failed"; exit 1; }
     step5_install_kubernetes || { print_error "Step 5 failed"; exit 1; }
     step6_install_containerd || { print_error "Step 6 failed"; exit 1; }
+    
+    # IMPORTANT: Start Trustee services BEFORE Kubernetes
+    # This avoids Docker/K8s iptables conflicts
+    step11_start_trustee_services || { print_error "Step 11 failed - Trustee services"; exit 1; }
+    
     step7_initialize_kubernetes || { print_error "Step 7 failed - Kubernetes cluster initialization"; exit 1; }
     step8_install_network || { print_error "Step 8 failed - Network setup"; exit 1; }
     step9_install_coco_operator || { print_error "Step 9 failed - CoCo operator"; exit 1; }
     step10_configure_coco_runtime || { print_error "Step 10 failed - Runtime configuration"; exit 1; }
-    step11_start_trustee_services || { print_error "Step 11 failed - Trustee services"; exit 1; }
     step12_deploy_demo_workload || { print_error "Step 12 failed - Demo workload"; exit 1; }
     step13_verify_deployment
     step14_save_info

@@ -70,11 +70,11 @@ sudo ./setup-coco-demo.sh
 **What it does**:
 - **Step 1-3**: Installs Docker, Docker Compose, and basic tools
 - **Step 4-5**: Prepares system and installs Kubernetes components
-- **Step 6**: Installs/configures containerd
-- **Step 7-8**: Initializes Kubernetes cluster and network
-- **Step 9**: Deploys CoCo operator v0.10.0
-- **Step 10**: Configures enclave-cc RuntimeClass
-- **Step 11**: Starts Trustee services (KBS, AS, RVPS, Keyprovider) using docker-compose
+- **Step 6**: Installs/configures containerd (always reconfigures for clean state)
+- **Step 7**: Starts Trustee services (KBS, AS, RVPS, Keyprovider) - **BEFORE Kubernetes!**
+- **Step 8-9**: Initializes Kubernetes cluster and network
+- **Step 10**: Deploys CoCo operator v0.10.0
+- **Step 11**: Configures enclave-cc RuntimeClass
 - **Step 12**: Deploys encrypted demo workload pod
 - **Step 13**: Verifies deployment and attestation
 - **Step 14**: Saves configuration info
@@ -93,7 +93,10 @@ STEP 8/8: Deploying Demo Workload
 ✅ All steps completed successfully!
 ```
 
-**Note**: The setup script now automatically deploys the demo workload, so you don't need to run a separate demo script.
+**Important Notes**: 
+- Trustee services are started **before** Kubernetes initialization to avoid Docker/Kubernetes iptables conflicts
+- Containerd is always reconfigured during setup to ensure clean state
+- The setup script now automatically deploys the demo workload
 
 ### Step 3: Alternative - Run Complete Flow Separately
 
@@ -168,14 +171,14 @@ confidential-containers-sgx-demo/
 ├── cleanup.sh                   # Safe cleanup script
 ├── check-prerequisites.sh       # Prerequisites checker
 ├── validate-deployment.sh       # Post-setup validation
+├── universal-k8s-recovery.sh    # Kubernetes recovery/reset script
 ├── configs/
 │   └── sgx-demo-pod.yaml       # Encrypted pod manifest
-├── trustee-config/
-│   ├── docker-compose.yml      # Trustee services configuration
-│   └── as-config.json          # Attestation Service configuration
 └── docs/
     └── COCO-SGX-ENCLAVE-CC-REPORT.md  # Complete technical report
 ```
+
+**Note**: The setup script automatically clones and configures the Trustee repository from GitHub during installation.
 
 ## 🔍 Verification Points
 
@@ -302,11 +305,16 @@ For production, use real Intel SGX hardware with DCAP attestation.
 
 **Solution**:
 ```bash
-# Reset and try again
+# Use the universal recovery script
+sudo ./universal-k8s-recovery.sh
+
+# Or manual reset
 sudo kubeadm reset -f
-sudo rm -rf /etc/kubernetes /var/lib/kubelet ~/.kube
+sudo rm -rf /etc/kubernetes /var/lib/kubelet ~/.kube /etc/containerd
 sudo ./setup-coco-demo.sh
 ```
+
+**Note**: The recovery script does a complete clean reset of Kubernetes.
 
 ### Issue 2: Trustee Services Not Starting
 
@@ -363,6 +371,8 @@ sudo cp /etc/kubernetes/admin.conf ~/.kube/config
 sudo chown $(id -u):$(id -g) ~/.kube/config
 ```
 
+**Or use the recovery script**: `sudo ./universal-k8s-recovery.sh` and then re-run setup.
+
 ## 📚 Additional Resources
 
 ### Documentation
@@ -405,9 +415,13 @@ The demo is successful if you see:
 
 **This proves**: Remote attestation works, encrypted images can be decrypted only after attestation, and confidential containers are operational!
 
-## 📋 What's New
+## � What's New
 
-**Recent Updates**:
+**Recent Updates (November 10, 2025)**:
+- **CRITICAL FIX**: Reordered setup steps - Trustee services now start **before** Kubernetes to avoid iptables conflicts
+- **CRITICAL FIX**: Containerd is now always reconfigured during setup (prevents broken config issues)
+- **NEW**: Added `universal-k8s-recovery.sh` for complete Kubernetes reset
+- Cleanup script now removes containerd config files for clean state
 - Integrated demo deployment into setup script (single command setup)
 - Added `run-demo.sh` wrapper for guided experience
 - Moved Trustee configs to dedicated `trustee-config/` directory
